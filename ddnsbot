@@ -36,6 +36,28 @@ LC_ALL=C
 # Usage:
 # ddnsbot -c <path/to/config> -T <path/to/token> -z <zone:optional> -d <domain>
 # Check for dependencies curl or wget, jq
+
+dependency_check() {
+  # Usage: <binaries>
+
+  _retval=0
+  _missing=""
+  for b in $@; do
+    if ! command -v "$b" >/dev/null 2>&1; then
+      _missing="$_missing $b"
+      _retval=$((_retval+1))
+    fi
+  done
+
+  if [ "$_retval" -gt 0 ]; then
+    for m in $_missing; do
+      printf 'dependency %s not found in PATH\n' "$m"
+    done
+  fi
+
+  return "$_retval"
+}
+
 # Check for configuration
 # Parse flags
 #
