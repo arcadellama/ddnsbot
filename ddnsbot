@@ -1,23 +1,23 @@
 #!/usr/bin/env sh
 #
 # BSD 3-Clause License
-# 
+#
 # Copyright (c) 2023, Justin Teague
-# 
+#
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
-# 
+#
 # 1. Redistributions of source code must retain the above copyright notice, this
 #    list of conditions and the following disclaimer.
-# 
+#
 # 2. Redistributions in binary form must reproduce the above copyright notice,
 #    this list of conditions and the following disclaimer in the documentation
 #    and/or other materials provided with the distribution.
-# 
+#
 # 3. Neither the name of the copyright holder nor the names of its
 #    contributors may be used to endorse or promote products derived from
 #    this software without specific prior written permission.
-# 
+#
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
 # AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 # IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -29,6 +29,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+# ddnsbot: dynamically update DNS IP records
+
 set -eu
 
 LC_ALL=C
@@ -38,28 +40,37 @@ DDNSBOT_VERSION='0.0.42'
 DDNSBOT_VERBOSITY=${DDNSBOT_VERBOSITY:-0}
 DDNSBOT_IP_VERSION=${DDNSBOT_IP_VERSION:-4}
 
+DDNSBOT_PUBLIC_IP_SERVERS_4="
+https://ipv4.seeip.org
+https://api4.ipify.org
+https://ipv4.icanhazip.com"
+
+DDSBOT_PUBLIC_IP_SERVERS_6="
+https://ipv6.seeip.org
+https://api6.ipify.org
+https://ipv6.icanhazip.com"
+
 usage() (
   cat <<EOF
 $DDNSBOT_PRGNAM -- Version $DDNSBOT_VERSION
 
 USAGE:
-$DDNSBOT_PRGNAM -46v -D <dns_provider> -i <address> -P <url> -T <api token> -d <zone:domain> [list|update]
+$DDNSBOT_PRGNAM -46v -D <dns_api> -i <address> -P <url> -T <token> -d <zone:domain> [list|update]
 
-  -4	    Use IPv4 address
-  -6	    Use IPv6 address (use -46 to fallback to IPv4)
+  -4        Use IPv4 address (Default)
+  -6        Use IPv6 address
   -d        Domain, or optionally, zone:domain
   -D        DNS Provider, e.g., "cloudflare"
   -i        Force an ip address, bypassing the public IP check.
   -P        Custom public IP reflector (optional)
   -T        API Token, either a string or a path to the file
-  -v	    Increase verbosity
+  -v	      Increase verbosity
 
 COMMANDS
   list			List the current public IP address and, if specified, the IP address of the domain.
   update    Update the DNS IP address to match the public IP address of the server.
 
 EXAMPLES
-
   List the current IP address of a domain:
   ddnsbot -d example.org list
 
@@ -73,15 +84,41 @@ EOF
 )
 
 err() (
-	printf >&2 'ERROR: %s\n' "$*"
+  printf >&2 'ERROR: %s\n' "$*"
 )
 
 inf() (
   if [ $DDNSBOT_VERBOSITY -gt 0 ]; then
-		printf >&2 %s\\n "$*"
-	fi
+    printf >&2 %s\\n "$*"
+  fi
 )
-  
+
+http__curl() (
+  # Usage: use as a stand-in for curl, less the -sS options.
+  retval=0 response="" ret=""
+  if ! response=$(mktemp 2>&1); then
+    printf %s\\n "$response"
+    return 1
+  fi
+
+  if ! ret=$("$(command -v curl)" -sS \
+    -o "$response" \
+    -w '%{http_code}' \
+    "$@" 2>&1); then
+    printf %s\\n "$ret" > "$response"
+    retval=1
+  fi
+
+  if [ $retval -eq 0 ] && [ "$ret" -ge 400 ]; then
+    printf 'HTTP Error Code: %s\n' "$ret"
+    retval=1
+  fi
+
+  cat "$response"
+  rm -rf "$response"
+  return $retval
+)
+
 dependency_check() (
   # Usage: required <binaries>
   # Returns: 0 if present or 1 if not
@@ -91,7 +128,7 @@ dependency_check() (
   for b in $@; do
     if ! command -v "$b" >/dev/null 2>&1; then
       missing="$missing $b"
-      retval=$((retval+1))
+      retval=$((retval + 1))
     fi
   done
 
@@ -113,50 +150,100 @@ zones_from_domain() (
   while true; do
     domain=${domain#*.}
     zones="$domain ${zones:-}"
-    case "$domain" in 
-      *.*) true ;;
-      *) printf %s\\n "$zones" ; return ;;
+    case "$domain" in
+    *.*) true ;;
+    *)
+      printf %s\\n "$zones"
+      return
+      ;;
     esac
   done
+)
+
+ddnsbot_get_public_ip() (
+  # USAGE: <ip address list>
+	# RETURNS: IP address or "1" if error
+	
+	for ip in $1; do
+		if ! res=$(http__curl \
+			--connect-timeout 10 \
+			--url :$ip" 2>&1); then
+		  err "$res"
+	  else
+		  printf %s\\n "$res"
+		  return 0
+		fi
+	done
+	printf 'Couldn't get public IP address.\n'
+	return 1
+
 )
 
 main() {
 
   # dependency check
-	dependencies="curl jq"
-	if ! check=$(dependency_check "$dependencies"); then
-		err "$check"
-	fi
+  dependencies="curl jq"
+  if ! check=$(dependency_check "$dependencies"); then
+    err "$check"
+  fi
 
   # parse flags
-	if [ $# -eq 0 ]; then
-		usage
-		return 1
-	fi
+  if [ $# -eq 0 ]; then
+    usage
+    return 1
+  fi
 
   while [ $# -gt 0 ]; do
     case "$1" in
-			-d) domains="${domains:-} $2" ; shift 2 ;;
-			-D) dns_api_plugin="$2" ; shift 2 ;;
-      -i) public_ip_address="$2" ; shift 2 ;;
-      -P) public_ip_reflector="$2" ; shift 2 ;;
-			-T) dns_api_token="$2" ; shift 2 ;;
-			-*) # parse bool flags
-				while getopts :46v bool; do
-					case "$bool" in
-            4) DDNSBOT_IP_VERSION=4 ;;
-            6) DNSBOT_IP_VERSION=6 ;;
-						v) DDNSBOT_VERBOSITY=$((DDNSBOT_VERBOSITY+1)) ;;
-            *) usage ; return 1 ;;
-					esac
-				done
-				shift
-				;;
-      list|update) command="$1" ; shift ;;
-			*) usage ; return 1 ;;
-		esac
-	done
+    -d)
+      domains="${domains:-} $2"
+      shift 2
+      ;;
+    -D)
+      dns_api_plugin="$2"
+      shift 2
+      ;;
+    -i)
+      public_ip_address="$2"
+      shift 2
+      ;;
+    -P)
+      public_ip_reflector="$2"
+      shift 2
+      ;;
+    -T)
+      dns_api_token="$2"
+      shift 2
+      ;;
+    -*) # parse bool flags
+      while getopts :46v bool; do
+        case "$bool" in
+        4) DDNSBOT_IP_VERSION=4 ;;
+        6) DNSBOT_IP_VERSION=6 ;;
+        v) DDNSBOT_VERBOSITY=$((DDNSBOT_VERBOSITY + 1)) ;;
+        *)
+          usage
+          return 1
+          ;;
+        esac
+      done
+      shift
+      ;;
+    list | update)
+      command="$1"
+      shift
+      ;;
+    *)
+      usage
+      return 1
+      ;;
+    esac
+  done
 
+  if ! ret=$(cmd_"$command"); then
+		err "$ret"
+		return 1
+	fi
 }
 
 main "$@"
