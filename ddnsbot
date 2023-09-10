@@ -257,7 +257,9 @@ main() {
   if [ -z "${public_ip_address:-}" ]; then
     for addr in $public_ip_reflector; do
       inf "Checking IP address from: $addr..."
-      if ! public_ip_address=$(ddnsbot_get_public_ip "$addr"); then
+      if public_ip_address=$(ddnsbot_get_public_ip "$addr"); then
+        break
+      else
         err "$public_ip_address"
         public_ip_address=""
       fi
