@@ -38,14 +38,15 @@ LC_ALL=C
 DDNSBOT_PRGNAM="ddnsbot"
 DDNSBOT_VERSION='0.0.42'
 DDNSBOT_VERBOSITY=${DDNSBOT_VERBOSITY:-0}
-DDNSBOT_IP_VERSION=${DDNSBOT_IP_VERSION:-4}
+DDNSBOT_IP_VERSION=${DDNSBOT_IP_VERSION:-0}
 
+DDNSBOT_PUBLIC_IP_URL=""
 DDNSBOT_PUBLIC_IP_SERVERS_4="
 https://ipv4.seeip.org
 https://api4.ipify.org
 https://ipv4.icanhazip.com"
 
-DDSBOT_PUBLIC_IP_SERVERS_6="
+DDNSBOT_PUBLIC_IP_SERVERS_6="
 https://ipv6.seeip.org
 https://api6.ipify.org
 https://ipv6.icanhazip.com"
@@ -167,14 +168,14 @@ ddnsbot_get_public_ip() (
 	for ip in $1; do
 		if ! res=$(http__curl \
 			--connect-timeout 10 \
-			--url :$ip" 2>&1); then
+			--url "$ip" 2>&1); then
 		  err "$res"
 	  else
 		  printf %s\\n "$res"
 		  return 0
 		fi
 	done
-	printf 'Couldn't get public IP address.\n'
+	printf "Couldn't get public IP address from %s\n" "$1"
 	return 1
 
 )
@@ -218,13 +219,13 @@ main() {
     -*) # parse bool flags
       while getopts :46v bool; do
         case "$bool" in
-        4) DDNSBOT_IP_VERSION=4 ;;
-        6) DNSBOT_IP_VERSION=6 ;;
-        v) DDNSBOT_VERBOSITY=$((DDNSBOT_VERBOSITY + 1)) ;;
-        *)
-          usage
-          return 1
-          ;;
+          4) DDNSBOT_IP_VERSION=$((DDNSBOT_IP_VERSION + 4)) ;;
+          6) DDNSBOT_IP_VERSION=$((DDNSBOT_IP_VERSION + 6)) ;;
+          v) DDNSBOT_VERBOSITY=$((DDNSBOT_VERBOSITY + 1)) ;;
+          *)
+            usage
+            return 1
+            ;;
         esac
       done
       shift
@@ -239,6 +240,38 @@ main() {
       ;;
     esac
   done
+
+  # Set DDNSBOT_PUBLIC_IP_URL
+  if [ -n "${public_ip_reflector:-}" ]; then
+    DDNSBOT_PUBLIC_IP_URL="$public_ip_reflector"
+  elif [ $DDNSBOT_IP_VERSION -le 4 ]; then
+    DDNSBOT_PUBLIC_IP_URL="$DDNSBOT_PUBLIC_IP_SERVERS_4"
+  elif [ $DDNSBOT_IP_VERSION -eq 6 ]; then
+    DDNSBOT_PUBLIC_IP_URL="$DDNSBOT_PUBLIC_IP_SERVERS_6"
+  elif [ $DDNSBOT_IP_VERSION -ge 10 ]; then
+    DDNSBOT_PUBLIC_IP_URL="$DDNSBOT_PUBLIC_IP_SERVERS_6 \
+      $DDNSBOT_PUBLIC_IP_SERVERS_4"
+  else
+    err "No public IP url reflector specified."
+    return 1
+  fi
+
+  # Get public IP address
+  if [ -z "${public_ip_address:-}" ]; then
+    for addr in $DDNSBOT_PUBLIC_IP_URL; do
+      if ! public_ip_address=$(ddnsbot_get_public_ip "$addr"); then
+        err "$public_ip_address"
+        public_ip_address=""
+      fi
+    done
+    if [ -z "$public_ip_address" ]; then
+      err "No public IP address found."
+      return 1
+    fi
+  fi
+
+  printf 'Public IP Address: %s\n' "$public_ip_address"
+  return
 
   if ! ret=$(cmd_"$command"); then
 		err "$ret"
