@@ -40,7 +40,6 @@ DDNSBOT_VERSION='0.0.42'
 DDNSBOT_VERBOSITY=${DDNSBOT_VERBOSITY:-0}
 DDNSBOT_IP_VERSION=${DDNSBOT_IP_VERSION:-0}
 
-DDNSBOT_PUBLIC_IP_URL=""
 DDNSBOT_PUBLIC_IP_SERVERS_4="
 https://ipv4.seeip.org
 https://api4.ipify.org
@@ -186,6 +185,7 @@ main() {
   dependencies="curl jq"
   if ! check=$(dependency_check "$dependencies"); then
     err "$check"
+    return 1
   fi
 
   # parse flags
@@ -242,23 +242,21 @@ main() {
   done
 
   # Set DDNSBOT_PUBLIC_IP_URL
-  if [ -n "${public_ip_reflector:-}" ]; then
-    DDNSBOT_PUBLIC_IP_URL="$public_ip_reflector"
-  elif [ $DDNSBOT_IP_VERSION -le 4 ]; then
-    DDNSBOT_PUBLIC_IP_URL="$DDNSBOT_PUBLIC_IP_SERVERS_4"
-  elif [ $DDNSBOT_IP_VERSION -eq 6 ]; then
-    DDNSBOT_PUBLIC_IP_URL="$DDNSBOT_PUBLIC_IP_SERVERS_6"
-  elif [ $DDNSBOT_IP_VERSION -ge 10 ]; then
-    DDNSBOT_PUBLIC_IP_URL="$DDNSBOT_PUBLIC_IP_SERVERS_6 \
-      $DDNSBOT_PUBLIC_IP_SERVERS_4"
-  else
-    err "No public IP url reflector specified."
-    return 1
+  if [ -z "${public_ip_reflector:-}" ]; then
+    if [ $DDNSBOT_IP_VERSION -le 4 ]; then
+      public_ip_reflector="$DDNSBOT_PUBLIC_IP_SERVERS_4"
+    elif [ $DDNSBOT_IP_VERSION -eq 6 ]; then
+      public_ip_reflector="$DDNSBOT_PUBLIC_IP_SERVERS_6"
+    elif [ $DDNSBOT_IP_VERSION -ge 10 ]; then
+      public_ip_reflector="$DDNSBOT_PUBLIC_IP_SERVERS_6 \
+        $DDNSBOT_PUBLIC_IP_SERVERS_4"
+    fi
   fi
 
   # Get public IP address
   if [ -z "${public_ip_address:-}" ]; then
-    for addr in $DDNSBOT_PUBLIC_IP_URL; do
+    for addr in $public_ip_reflector; do
+      inf "Checking IP address from: $addr..."
       if ! public_ip_address=$(ddnsbot_get_public_ip "$addr"); then
         err "$public_ip_address"
         public_ip_address=""
