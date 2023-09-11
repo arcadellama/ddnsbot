@@ -157,12 +157,12 @@ get_zones_from_domain() (
   case "$domain" in
     *:*) printf %s\\n "${domain%:*}" ; return ;;
   esac
-  zones=""
+  zones="$domain"
   while true; do
     domain=${domain#*.}
-    zones="$domain ${zones:-}"
+    zones="$domain $zones"
     case "$domain" in
-    *.*) true ;;
+    *.*) continue ;;
     *)
       printf %s\\n "$zones"
       return
@@ -252,8 +252,32 @@ cloudflare__get_zone_id() (
     esac
   done
 
-  # DEBUG
-  echo "1234567890"
+  if ! dns_zones_json="$(http__curl \
+    --request GET \
+    --url https://api.cloudflare.com/client/v4/zones \
+    --header 'Content-Type: application/json' \
+    --header "Authorization: Bearer $token")"; then
+    printf %s\\n "$dns_zones_json"
+    return 1
+  fi
+
+  total_count="$(printf %s\\n "$dns_zones_json" \
+    | jq -r .result_info.total_count)"
+
+  while [ "$total_count" -gt 0 ]; do
+    total_count=$((total_count - 1)) # adjust for counting from zero
+    dns_name="$(printf %s\\n "$dns_zones_json" \
+      | jq -r .result["$total_count"].name)"
+
+    dns_id="$(printf %s\\n "$dns_zones_json" \
+      | jq -r .result["$total_count"].id)"
+
+    case "$dns_name" in
+      "$zone_name") printf %s\\n "$dns_id" ; return ;;
+    esac
+    total_count=$((total_count - 1))
+  done
+  return 1
 )
 
 main() {
@@ -301,10 +325,7 @@ main() {
           4) ddnsbot_ip_version=$((ddnsbot_ip_version + 4)) ;;
           6) ddnsbot_ip_version=$((ddnsbot_ip_version + 6)) ;;
           v) DDNSBOT_VERBOSITY=$((DDNSBOT_VERBOSITY + 1)) ;;
-          *)
-            usage
-            return 1
-            ;;
+          *) continue ;;
         esac
       done
       shift
@@ -385,6 +406,7 @@ main() {
       *:*) d="${d#*:}" ;;
     esac
 
+    # Get the one ID
     for z in $zone_list; do
       if dns_zone_id="$("${dns_api_plugin}"__get_zone_id \
         -z "$z" -T "$dns_api_token")"; then
@@ -397,8 +419,12 @@ main() {
 
     if [ -z "${dns_zone_id:-}" ]; then
       err "Unable to get zone ID for $d"
-      return 1
+      continue  
     fi
+
+    # Get the domain ID
+    # Get the current domain IP address
+    # If command update, update the domain IP address with Public IP Address
 
   done # end of $domains loop
 }
