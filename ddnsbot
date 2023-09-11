@@ -50,7 +50,7 @@ https://api6.ipify.org
 https://ipv6.icanhazip.com"
 
 usage() (
-  cat <<EOF
+  cat << EOF
 $DDNSBOT_PRGNAM -- Version $DDNSBOT_VERSION
 
 USAGE:
@@ -133,8 +133,10 @@ dependency_check() (
 
   retval=0
   missing=""
+  # $@ intentionally split for array
+  # shellcheck disable=SC2068
   for b in $@; do
-    if ! command -v "$b" >/dev/null 2>&1; then
+    if ! command -v "$b" > /dev/null 2>&1; then
       missing="$missing $b"
       retval=$((retval + 1))
     fi
@@ -155,38 +157,41 @@ get_zones_from_domain() (
   # Example: zones_from_domain my.example.com returns: com example.com my.example.com
   domain="${1?zones_from_domain: no domain specified}"
   case "$domain" in
-    *:*) printf %s\\n "${domain%:*}" ; return ;;
+    *:*)
+      printf %s\\n "${domain%:*}"
+      return
+      ;;
   esac
   zones="$domain"
   while true; do
     domain=${domain#*.}
     zones="$domain $zones"
     case "$domain" in
-    *.*) continue ;;
-    *)
-      printf %s\\n "$zones"
-      return
-      ;;
+      *.*) continue ;;
+      *)
+        printf %s\\n "$zones"
+        return
+        ;;
     esac
   done
 )
 
 ddnsbot_get_public_ip() (
   # USAGE: <ip address list>
-	# RETURNS: IP address or "1" if error
-	
-	for ip in $1; do
-		if ! res=$(http__curl \
-			--connect-timeout 10 \
-			--url "$ip" 2>&1); then
-		  warn "$res"
-	  else
-		  printf %s\\n "$res"
-		  return 0
-		fi
-	done
-	printf "Couldn't get public IP address from %s\n" "$1"
-	return 1
+  # RETURNS: IP address or "1" if error
+
+  for ip in $1; do
+    if ! res=$(http__curl \
+      --connect-timeout 10 \
+      --url "$ip" 2>&1); then
+      warn "$res"
+    else
+      printf %s\\n "$res"
+      return 0
+    fi
+  done
+  printf "Couldn't get public IP address from %s\n" "$1"
+  return 1
 
 )
 
@@ -231,24 +236,36 @@ cloudflare__verify_token() (
   success="$(printf %s\\n "$verify_json" | jq -r .success)"
   case "$success" in
     true) printf %s\\n "$token" ;; # if true
-       *) printf %s\\n "$verify_json" ; return 1 ;; # if anything else
+    *)
+      printf %s\\n "$verify_json"
+      return 1
+      ;; # if anything else
   esac
 
 )
 
 cloudflare__get_zone_id() (
-  # Check for args
+  # check for args
   if [ $# -eq 0 ]; then
-    printf 'Improper use of cloudflare__get_zone_id'
+    printf 'improper use of cloudflare__get_zone_id'
     return 1
   fi
 
-  # Parse args
+  # parse args
   while [ $# -gt 0 ]; do
     case "$1" in
-      -z) zone_name="$2" ; shift 2 ;;
-      -T) token="$2" ; shift 2 ;;
-       *) printf 'Illegal argument: %s\n' "$1" ; return 1 ;;
+      -z)
+        zone_name="$2"
+        shift 2
+        ;;
+      -T)
+        token="$2"
+        shift 2
+        ;;
+      *)
+        printf 'illegal argument: %s\n' "$1"
+        return 1
+        ;;
     esac
   done
 
@@ -262,7 +279,7 @@ cloudflare__get_zone_id() (
   fi
 
   total_count="$(printf %s\\n "$dns_zones_json" \
-    | jq -r .result_info.total_count)"
+    | jq -r '.result | length')"
 
   while [ "$total_count" -gt 0 ]; do
     total_count=$((total_count - 1)) # adjust for counting from zero
@@ -273,17 +290,146 @@ cloudflare__get_zone_id() (
       | jq -r .result["$total_count"].id)"
 
     case "$dns_name" in
-      "$zone_name") printf %s\\n "$dns_id" ; return ;;
+      "$zone_name")
+        printf %s\\n "$dns_id"
+        return
+        ;;
     esac
-    total_count=$((total_count - 1))
   done
   return 1
+)
+
+cloudflare__get_domain_id() (
+  # parse args
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -z)
+        zone_id="$2"
+        shift 2
+        ;;
+      -d)
+        domain_name="$2"
+        shift 2
+        ;;
+      -T)
+        token="$2"
+        shift 2
+        ;;
+      *)
+        printf 'illegal argument: %s\n' "$1"
+        return 1
+        ;;
+    esac
+  done
+
+  if ! dns_domain_json="$(http__curl \
+    --request GET \
+    --url https://api.cloudflare.com/client/v4/zones/"$zone_id"/dns_records \
+    --header 'Content-Type: application/json' \
+    --header "Authorization: Bearer $token")"; then
+    printf %s\\n "$dns_domain_json"
+    return 1
+  fi
+
+  total_count="$(printf %s\\n "$dns_domain_json" \
+    | jq -r '.result | length')"
+
+  while [ "$total_count" -gt 0 ]; do
+    total_count=$((total_count - 1)) # adjust for counting from zero
+    dns_name="$(printf %s\\n "$dns_domain_json" \
+      | jq -r .result["$total_count"].name)"
+
+    dns_id="$(printf %s\\n "$dns_domain_json" \
+      | jq -r .result["$total_count"].id)"
+
+    case "$dns_name" in
+      "$domain_name")
+        printf %s\\n "$dns_id"
+        return
+        ;;
+    esac
+  done
+  return 1
+)
+
+cloudflare__get_domain_ip() (
+  # parse args
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -z)
+        zone_id="$2"
+        shift 2
+        ;;
+      -i)
+        domain_id="$2"
+        shift 2
+        ;;
+      -T)
+        token="$2"
+        shift 2
+        ;;
+      *)
+        printf 'illegal argument: %s\n' "$1"
+        return 1
+        ;;
+    esac
+  done
+
+  if ! dns_domain_json="$(http__curl \
+    --request GET \
+    --url https://api.cloudflare.com/client/v4/zones/"$zone_id"/dns_records/"$domain_id" \
+    --header 'Content-Type: application/json' \
+    --header "Authorization: Bearer $token")"; then
+    printf %s\\n "$dns_domain_json"
+    return 1
+  fi
+
+  printf %s\\n "$dns_domain_json" | jq -r '.result.content' || return 1
+
+)
+
+cloudflare__update_dns_ip() (
+  # parse args
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -z)
+        zone_id="$2"
+        shift 2
+        ;;
+      -i)
+        domain_id="$2"
+        shift 2
+        ;;
+      -p)
+        ip_address="$2"
+        shift 2
+        ;;
+      -T)
+        token="$2"
+        shift 2
+        ;;
+      *)
+        printf 'illegal argument: %s\n' "$1"
+        return 1
+        ;;
+    esac
+  done
+
+  if ! update_dns="$(http__curl \
+    --request PATCH \
+    --url https://api.cloudflare.com/client/v4/zones/"$zone_id"/dns_records/"$domain_id" \
+    --header 'Content-Type: application/json' \
+    --header "Authorization: Bearer $token" \
+    --data '{"content": "'"$ip_address"'"}')"; then
+    printf %s\\n "$update_dns"
+    return 1
+  fi
 )
 
 main() {
 
   ddnsbot_ip_version=0
-  
+
   # dependency check
   dependencies="curl jq"
   if ! check=$(dependency_check "$dependencies"); then
@@ -299,47 +445,51 @@ main() {
 
   while [ $# -gt 0 ]; do
     case "$1" in
-    -d)
-      domains="${domains:-} $2"
-      shift 2
-      ;;
-    -D)
-      dns_api_plugin="$2"
-      shift 2
-      ;;
-    -i)
-      public_ip_address="$2"
-      shift 2
-      ;;
-    -P)
-      public_ip_reflector="$2"
-      shift 2
-      ;;
-    -T)
-      dns_api_token="$2"
-      shift 2
-      ;;
-    -*) # parse bool flags
-      while getopts :46v bool; do
-        case "$bool" in
-          4) ddnsbot_ip_version=$((ddnsbot_ip_version + 4)) ;;
-          6) ddnsbot_ip_version=$((ddnsbot_ip_version + 6)) ;;
-          v) DDNSBOT_VERBOSITY=$((DDNSBOT_VERBOSITY + 1)) ;;
-          *) continue ;;
-        esac
-      done
-      shift
-      ;;
-    list | update)
-      command="$1"
-      shift
-      ;;
-    *)
-      usage
-      return 1
-      ;;
+      -d)
+        domains="${domains:-} $2"
+        shift 2
+        ;;
+      -D)
+        dns_api_plugin="$2"
+        shift 2
+        ;;
+      -i)
+        public_ip_address="$2"
+        shift 2
+        ;;
+      -P)
+        public_ip_reflector="$2"
+        shift 2
+        ;;
+      -T)
+        dns_api_token="$2"
+        shift 2
+        ;;
+      -*) # parse bool flags
+        while getopts :46Yv bool; do
+          case "$bool" in
+            4) ddnsbot_ip_version=$((ddnsbot_ip_version + 4)) ;;
+            6) ddnsbot_ip_version=$((ddnsbot_ip_version + 6)) ;;
+            Y) prompt=Y ;;
+            v) DDNSBOT_VERBOSITY=$((DDNSBOT_VERBOSITY + 1)) ;;
+            *) continue ;;
+          esac
+        done
+        shift
+        ;;
+      list | update)
+        command="$1"
+        shift
+        ;;
+      *)
+        usage
+        return 1
+        ;;
     esac
   done
+
+  # make default action to list
+  command="${command:=list}"
 
   # Set DDNSBOT_PUBLIC_IP_URL
   if [ -z "${public_ip_reflector:-}" ]; then
@@ -370,11 +520,15 @@ main() {
     fi
   fi
 
-  printf 'Public IP Address: %s\n' "$public_ip_address"
+  if [ "$command" = "list" ]; then
+    printf 'Host public IP address: %s\n' "$public_ip_address"
+  else
+    inf "Host public IP address: $public_ip_address"
+  fi
 
   if [ -z "${domains:-}" ]; then
-    inf "No domains specified."
-    return
+    err "No domains specified."
+    return 1
   fi
 
   if [ -z "${dns_api_plugin:-}" ]; then
@@ -387,9 +541,9 @@ main() {
     return 1
   fi
 
-  # Get the string for the token
+  # Verify the token
   if ! dns_api_token="$("${dns_api_plugin}"__verify_token "$dns_api_token")"; then
-    err "Unable to initialize DNS API Token with $dns_api_plugin."
+    err "Unable to verify DNS API Token with $dns_api_plugin."
     warn "$dns_api_token"
     return 1
   fi
@@ -400,7 +554,7 @@ main() {
       err "Unable to get zones from $d"
       return 1
     fi
-    
+
     # Drop the zone if specificed in the domain
     case "$zone_list" in
       *:*) d="${d#*:}" ;;
@@ -419,12 +573,57 @@ main() {
 
     if [ -z "${dns_zone_id:-}" ]; then
       err "Unable to get zone ID for $d"
-      continue  
+      continue
     fi
 
     # Get the domain ID
+    if ! dns_domain_id="$("${dns_api_plugin}"__get_domain_id \
+      -z "$dns_zone_id" -d "$d" -T "$dns_api_token")"; then
+      err "Cannot get domain ID for $d. Does it exist?"
+      return 1
+    fi
+    inf "DNS Domain ID for $d is $dns_domain_id"
+
     # Get the current domain IP address
+    if ! dns_domain_ip="$("${dns_api_plugin}"__get_domain_ip \
+      -z "$dns_zone_id" -i "$dns_domain_id" -T "$dns_api_token")"; then
+      err "Cannot get domain ip address for $d. Does it exist?"
+      return 1
+    fi
+
+    # If command list, list the current details
+    if [ "$command" = "list" ]; then
+      printf 'IP address for %s: %s\n' "$d" "$dns_domain_ip"
+    else
+      inf "IP address for $d is $dns_domain_ip"
+    fi
+
     # If command update, update the domain IP address with Public IP Address
+    if [ "$command" != "update" ]; then
+      continue
+    fi
+
+    if [ "$public_ip_address" != "$dns_domain_ip" ]; then
+      if [ "${prompt:-}" != "Y" ]; then
+        printf 'Update %s from %s to %s? [y/N] ' \
+          "$d" "$dns_domain_ip" "$public_ip_address"
+        read -r prompt
+      fi
+      case "$prompt" in y | Y)
+        if ! update="$("${dns_api_plugin}"__update_dns_ip \
+          -z "$dns_zone_id" \
+          -i "$dns_domain_id" \
+          -p "$public_ip_address" \
+          -T "$dns_api_token")"; then
+          err "Unable to update $d to $public_ip_address"
+          err "$update"
+          continue
+        fi
+        inf "$d successfully updated to $public_ip_address"
+        ;;
+      *) continue ;;
+      esac
+    fi
 
   done # end of $domains loop
 }
