@@ -63,6 +63,7 @@ $DDNSBOT_PRGNAM -46v -D <dns_api> -i <address> -P <url> -T <token> -d <zone:doma
   -i        Force an ip address, bypassing the public IP check.
   -P        Custom public IP reflector (optional)
   -T        API Token, either a string or a path to the file
+  -Y        Assume "yes" for updating prompts
   -v	      Increase verbosity
 
 COMMANDS
@@ -428,8 +429,6 @@ cloudflare__update_dns_ip() (
 
 main() {
 
-  ddnsbot_ip_version=0
-
   # dependency check
   dependencies="curl jq"
   if ! check=$(dependency_check "$dependencies"); then
@@ -488,8 +487,9 @@ main() {
     esac
   done
 
-  # make default action to list
-  command="${command:=list}"
+  # Default values
+  command="${command:-list}"
+  ddnsbot_ip_version="${ddns_ip_version:-4}"
 
   # Set DDNSBOT_PUBLIC_IP_URL
   if [ -z "${public_ip_reflector:-}" ]; then
