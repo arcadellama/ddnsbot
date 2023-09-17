@@ -54,31 +54,46 @@ usage() (
 $DDNSBOT_PRGNAM -- Version $DDNSBOT_VERSION
 
 USAGE:
-$DDNSBOT_PRGNAM -46v -D <dns_api> -i <address> -P <url> -T <token> -d <zone:domain> [list|update]
+ddnsbot [-46vY] -D <dns> -i <addr> -P <url> -T <path> -d <zone:domain> [command] 
 
-  -4        Use IPv4 address (Default)
-  -6        Use IPv6 address
-  -d        Domain, or optionally, zone:domain
-  -D        DNS Provider, e.g., "cloudflare"
-  -i        Force an ip address, bypassing the public IP check.
-  -P        Custom public IP reflector (optional)
-  -T        API Token, either a string or a path to the file
-  -Y        Assume "yes" for updating prompts
-  -v	      Increase verbosity
+FLAGS
+  -4            Use IPv4 address (Default)
+  -6            Use IPv6 address
+  -Y            Assume "yes" for updating prompts
+  -v            Increase verbosity
+
+OPTIONS
+  -d <domain>   Domain, or optionally, zone:domain
+  -D <dns>      DNS Provider, e.g., "cloudflare"
+  -i <address>  Force an ip address, bypassing the public IP check.
+  -P <url>      Custom public IP reflector (optional)
+  -T <path>     API Token, either a string or a path to the file
 
 COMMANDS
-  list			List the current public IP address and, if specified, the IP address of the domain.
-  update    Update the DNS IP address to match the public IP address of the server.
+  list      List the current public IP address and, if specified, the IP 
+            address of the domain.
+  update    Update the DNS IP address to match the public IP address
+            of the server.
 
 EXAMPLES
   List the current IP address of a domain:
   ddnsbot -d example.org list
 
   Update two DNS records to the public IPv4 address of the server:
-	ddnsbot -4 -D cloudflare -T ~/.secrets/cloudflare.ini -d example.org -d my.example.com update
+  ddnsbot \
+      -D cloudflare \
+      -T ./cloudflare.ini \
+      -d example.org \
+      -d my.example.com \
+      update
 
   Update a DNS record to a specific IP address:
-  ddnsbot -D hetzner -T "0987654321ABCD" -i 192.168.0.1 -d local.internal.example.com
+  ddnsbot \
+      -D hetzner \
+      -T "0987654321ABCD" \
+      -i 192.168.0.1 \
+      -d local.example.com \
+      update
 
 EOF
 )
@@ -155,7 +170,7 @@ dependency_check() (
 get_zones_from_domain() (
   # Usage: <domain.tld>
   # Returns: List of possible zone names derived from domain
-  # Example: zones_from_domain my.example.com returns: com example.com my.example.com
+  # E.g, 'my.example.com' returns: com example.com my.example.com
   domain="${1?zones_from_domain: no domain specified}"
   case "$domain" in
     *:*)
